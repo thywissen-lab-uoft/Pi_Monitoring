@@ -1,1 +1,3 @@
 #List any files you wish to ignore below.
+*pyc
+*restart.txt
