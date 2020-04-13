@@ -6,8 +6,8 @@ import matplotlib.dates as mdates
 
 
 class Plotobject():
-    _plotframe = int(24*60*60/30)                            # saves every minute for 1 hour(s) (plot time frame for long time plot)
-    _short_t = int(3*60*60/30)                               # plot time frame for short time plot
+    _plotframe = int(24*60*60/120)                            # saves every minute for 1 hour(s) (plot time frame for long time plot)
+    _short_t = int(3*60*60/120)                               # plot time frame for short time plot
     _cycle_t = int(1.25*60/0.25)                               # plot one cycle
     _data_deque = deque(maxlen=_plotframe)                    # holding measurement data
     _time_deque = deque(maxlen=_plotframe)                    # holding time data
@@ -92,8 +92,8 @@ https://github.com/matplotlib/matplotlib/pull/8185")
         self._ax1[0].set_ylabel("Humidity in %")
         self._ax2[0].set_ylabel("Humidity in %")
         #self._ax3[0].set_ylabel("Humidity in %")
-        self._ax1[0].set_ylim([30,50])
-        self._ax2[0].set_ylim([30,50])
+        self._ax1[0].set_ylim([35,45])
+        self._ax2[0].set_ylim([35,45])
         device_nb = 0                                         # used to match label and plotstyle for temperature and humidity of same device
         for subcol in plottable_data[0]:
             self._ax1[0].plot(self._time_deque, subcol, style[device_nb], label='Humidity{}'.format(device_nb+1))
@@ -101,13 +101,13 @@ https://github.com/matplotlib/matplotlib/pull/8185")
         #    if received_trigger:
         #        self._ax3[0].plot(time_list_cycle, subcol[-self._cycle_t:], style[device_nb], label='Humidity{}'.format(device_nb+1))
             device_nb += 1
-        self._ax1[0].legend(loc='upper left', fontsize = 'x-small', labels=('Above office','Test table east','Test table west','Test table centre','Experiment table','Laser table'))
+        #self._ax3[0].legend(loc='upper left', fontsize = 'x-small')
         ### plotting temperature data ####
         self._ax1[1].set_ylabel("Temperature in Deg C")
         self._ax2[1].set_ylabel("Temperature in Deg C")
         #self._ax3[1].set_ylabel("Temperature in Deg C")
-        self._ax1[1].set_ylim([21.0,25.0])
-        self._ax2[1].set_ylim([21.0,25.0])
+        self._ax1[1].set_ylim([21.5,24.5])
+        self._ax2[1].set_ylim([21.5,24.5])
         device_nb = 0                                         # used to match label and plotstyle for temperature and humidity of same device
         for subbcol in plottable_data[1]:
             self._ax1[1].plot(self._time_deque, subbcol, style[device_nb], label='Temperature{}'.format(device_nb+1))
@@ -138,10 +138,10 @@ https://github.com/matplotlib/matplotlib/pull/8185")
         for ax in range(len(self._ax1)):
             self._ax1[ax].xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
             self._ax2[ax].xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
-            self._ax1[ax].xaxis.set_tick_params(rotation = 0)
-            self._ax2[ax].xaxis.set_tick_params(rotation = 0)
+            self._ax1[ax].xaxis.set_tick_params(rotation = 45)
+            self._ax2[ax].xaxis.set_tick_params(rotation = 45)
         self._ax3.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
-        self._ax3.xaxis.set_tick_params(rotation = 0)
+        self._ax3.xaxis.set_tick_params(rotation = 45)
 ##        self._fig1.suptitle("{1:02}-{0:02}-{2:04}".format(new_date.tm_mday, new_date.tm_mon, new_date.tm_year))
 ##        self._fig2.suptitle("{1:02}-{0:02}-{2:04}".format(new_date.tm_mday, new_date.tm_mon, new_date.tm_year))
 ##        self._fig3.suptitle("{1:02}-{0:02}-{2:04}".format(new_date.tm_mday, new_date.tm_mon, new_date.tm_year))

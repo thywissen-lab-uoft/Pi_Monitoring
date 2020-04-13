@@ -11,7 +11,7 @@ class Plotter():
         'filemask_slow':"DataLog_Slow_{2:04}-{1:02}-{0:02}.txt",\
         'trigger_pin':16,\
         'trigger_enable':True,\
-        'plot_period':30*1000,\
+        'plot_period':120*1000,\
         }
 
     def __init__(self,**kwargs):

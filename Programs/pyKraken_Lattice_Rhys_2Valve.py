@@ -6,30 +6,26 @@ import py2C as i2c
 import RPi.GPIO as gpio
 import numpy as np
 import time
-import datetime
 import smbus
-import os
 import concurrent.futures
 import threading
 import queue
+import math
+#from plotting2fig import Plotobject                           # self-defined class for plotting
 
 class DataLogger():
     """ A simple data-to-file logging class. """
 
-    #Some defaults defined here, but may be overwritten upon object construction.
     _default = {\
-        'meas_period':0.1,\
+        'meas_period':0.50,\
         'avg_period':5.0,\
-        'save_period':60.0,\
         'trigger_pin':None,\
         'trigger_enable':False,\
         'trigger_timeout':10*1000,\
         'AC_pin':12,\
         'Heater_pin':26,\
         'path':"./",\
-        'filemask_temp':"Datalog_Temp.txt",\
-        'filemask_fast':"Datalog_Fast.txt",\
-        'filemask_slow':"Datalog_Slow_{2:04}-{1:02}-{0:02}.txt",\
+        'filemask':"DataLog_3_{2:04}-{1:02}-{0:02}.txt",\
         }
     
     def __init__(self,**kwargs):
@@ -52,7 +48,7 @@ class DataLogger():
             setattr(self,kw,self._default[kw])
         for kw in kwargs:
             assert kw in self._default,\
-                   "Uknown keyword '{}!'".format(kw)
+                   "Unknown keyword '{}!'".format(kw)
             setattr(self,kw,kwargs[kw])
         # initialize data list
         self._data = []
@@ -72,25 +68,17 @@ class DataLogger():
     def get_measurements(self):
         """ Returns the list of measurement values obatained by each device's
         get() method. """
-        results_list = [ ]
-        #Add a short pause between reading devices.
-        for device in self._devices:
-            results_list.append(device.get())
-            time.sleep(0.010)
-        return results_list
-        #return [device.get() for device in self._devices]
+        return [device.get() for device in self._devices]
 
     def start_measurement_loop(self, queue_cool, queue_heat, event):
         " Starts the measurement loop for this DataLogger. "
-        print('STARTING MEASUREMENT LOOP')
-        # @@ cheap and dirty!!
-        last_save = time.time();
-        now = datetime.datetime.now()
+        # start plotting
+        #plotobj = Plotobject()
 
         # Temperature control feedback loop initialization
         gpio.output(self.AC_pin,False)
         gpio.output(self.Heater_pin,False)
-        T_Ref = 22.00
+        T_Ref = 22.75
         Err_Old = 0.0
         Err = 0.0
         Err_Tot = 0.0
@@ -111,18 +99,19 @@ class DataLogger():
         Derivative_Time = 4
         Err_Vec = [0] * Memory_Length
         t_Vec = np.array([el for el in range(0,Memory_Length)])
-        Exp_Vec = [np.exp(-el / Tau) for el in range(0,Memory_Length)]
-
-        while True:
+        Exp_Vec = [math.exp(-el / Tau) for el in range(0,Memory_Length)]
+        
+        # @@ cheap and dirty!!
+        Count = 0
+        while not event.is_set():
             line_note = ""
             triggered = "0"
             # wait for trigger if triggered operation is selected
             if self.trigger_enable and self.trigger_pin != None:
-                #res = gpio.wait_for_edge(self.trigger_pin,\
-                #                        gpio.RISING,\
-                #                         timeout=self.trigger_timeout)
-                res = gpio.input(self.trigger_pin)
-                if res == 0:
+                res = gpio.wait_for_edge(self.trigger_pin,\
+                                         gpio.RISING,\
+                                         timeout=self.trigger_timeout)
+                if res == None:
                     line_note = "timeout"
                 else:
                     line_note = "TR({})".format(res)
@@ -139,56 +128,35 @@ class DataLogger():
                 # wait for next measurement
                 while (time.time() - last) < self.meas_period:
                     pass
-            avg = [(sum([data[i] for data in self._data]) / len(self._data)) for i in range(0,len(self._data[0]))]
-            fast_data = avg[0:12]
-            slow_data = avg[12::]
-            #Hardcode some data filtering... bad?
-            #Subtract bias from bipolar ADC channels.
-            avg[0] = avg[0] - 1.72
-            avg[1] = avg[1] - 1.72
-            avg[2] = avg[2] - 1.72
-            avg[3] = avg[3] - 1.72
-            #Dirty filtering of outliers
-            if max(avg) > 50: 
-                continue
+            #First few measurements bad (~125) for some reason.
+            #print(self._data)
+            #print("")
+            avg = [sum([data[i] for data in self._data[2:]])\
+                   /(len(self._data) - 2) \
+                   for i in range(0,len(self._data[0]))]
             # build filename with current date
-            now = datetime.datetime.now()
-            outfile_temp = self.path + self.filemask_temp
-            outfile_fast = self.path + self.filemask_fast
-            outfile_slow = self.path + self.filemask_slow.\
-                      format(now.day,now.month,now.year)
+            now = time.localtime()
+            outfile = self.path + self.filemask.\
+                      format(now.tm_mday,now.tm_mon,now.tm_year)
             # build timestamp
-            timestamp = "{:04} {:02} {:02} {:02}:{:02}:{:02}.{:03}".\
-                        format(now.year,now.month,now.day,now.hour,now.minute,now.second,now.microsecond)
+            timestamp = "{:02}:{:02}:{:02}".\
+                        format(now.tm_hour,now.tm_min,now.tm_sec)
             # build line
-            fast_line = ",".join(["{:.4f}".format(a) for a in avg])
-            fast_line += "," + triggered
-            # print to standard output
+            line = ",".join(["{:.4f}".format(a) for a in avg])
+            line += "," + triggered
+            # print to stdandard output
             print_line = " , ".join(["{:.4f}".format(a) for a in avg])
-            print(outfile_temp + " < " + print_line + "   @ " \
+            print(outfile + " < " + print_line + "   @ " \
                   + timestamp + "   " + line_note)
-            # append to file
-            with open(outfile_temp,'a') as f:
-                f.write(timestamp + "," +fast_line+"\n")
-            # Create another file for slow temperature/humidity logging, and copy contents of temporary fast log to another file
-            if (time.time() - last_save) > self.save_period:
-                slow_line = ",".join(["{:.4f}".format(sd) for sd in slow_data])
-                slow_line += "," + triggered
-                with open(outfile_slow,'a') as f:
-                    #Average here?
-                    f.write(timestamp + "," +slow_line+"\n")
-                #os.remove(outfile_fast)
-                with open(outfile_temp,'r') as f1:
-                    with open(outfile_fast,'w') as f2:
-                        #f2.seek(0)
-                        for line in f1:
-                            f2.write(line)
-                        #f2.truncate()
-                os.remove(outfile_temp)
-                last_save = time.time()
+            # append to file and add to plot every 20th iteration
+            if not (Count % Save_Period):
+                with open(outfile,'a') as f:
+                    f.write(timestamp + "," +line+"\n")
+                # pass data for plotting
+                #plotobj.add_plot_data(now, avg, triggered)
 
             # Regulate damper valve position
-            T = (slow_data[1] + slow_data[3] + slow_data[7])/3.0
+            T = (avg[9] + avg[5])/2.0
             Err_Old = Err
             Err = (T - T_Ref)
             if Err < 0:
@@ -221,6 +189,13 @@ class DataLogger():
             print("")
             queue_cool.put(Duty_Cycle_Cool)
             queue_heat.put(Duty_Cycle_Heat)
+##            Draw = rnd.uniform(-1,1)
+##            if Draw < Scaled_Err:
+##                gpio.output(self.AC_pin,True)
+##            else:
+##                gpio.output(self.AC_pin,False)
+
+            Count = Count + 1
 
     def Control_Valve_Cool(self, queue, event):
         Duty_Cycle = 0.0
@@ -228,7 +203,6 @@ class DataLogger():
         while not event.is_set():
             if not queue.empty():
                 Duty_Cycle = queue.get()
-            print('Cooling')
             gpio.output(self.AC_pin,True)
             time.sleep(Duty_Cycle * 1.0)
             gpio.output(self.AC_pin,False)
@@ -240,11 +214,57 @@ class DataLogger():
         while not event.is_set():
             if not queue.empty():
                 Duty_Cycle = queue.get()
-            print('Heating')
             gpio.output(self.Heater_pin,True)
             time.sleep(Duty_Cycle * 1.0)
             gpio.output(self.Heater_pin,False)
             time.sleep((1.0 - Duty_Cycle) * 1.0)
+
+def triggered_trace(trigger_pin,devices,timeout=-1,tmax=None,nmax=10,\
+                    dt=None):
+    """ Performs a triggered measurement, accumulating samples either until
+    'nmax' samples are reached or until theloop has run for time 'tmax'.
+    Optionally can force time intervals of measurements to 'dt'.
+    The loop starts after a rising flank has been detected on 'trigger_pin',
+    or once the 'timeout' time is elapsed. """
+    # reshape and validate input
+    if type(devices) not in (tuple,list,):
+        devices = [devices]
+    assert nmax != 0 or tmax != 0,"Missing break condition!"
+    # initialize empty data array
+    data = []
+    # start by waiting for the trigger
+    gpio.wait_for_edge(trigger_pin,gpio.RISING,timeout=timeout)
+    print('Go!')
+    start=time.clock()
+    # based on choices: slightly different loops
+    if dt == None:
+        if tmax == None:
+            # continuous loop until nmax reached
+            while len(data) < nmax:
+                data.append([time.clock()-start]\
+                            +[d.get() for d in devices])
+        else:
+            # continuous loop until nmax or tmax reached
+            while (len(data) < nmax) and (time.clock()-start < tmax):
+                data.append([time.clock()-start]\
+                            +[d.get() for d in devices])
+    else:
+        if tmax == None:
+            # continuous loop until nmax reached, waiting for dt
+            while len(data) < nmax:
+                data.append([time.clock()-start]\
+                            +[d.get() for d in devices])
+                while (time.clock()-start < dt*len(data)):
+                    pass
+            # continuous loop until nmax or tmax reached, waiting for dt
+            while (len(data) < nmax) and (time.clock()-start < tmax):
+                data.append([time.clock()-start]\
+                            +[d.get() for d in devices])
+                while (time.clock()-start < dt*len(data)):
+                    pass
+    # hand back the measurement result
+    return data
+
             
 if __name__ == "__main__":       
     print('RELEASE THE KRAKEN!!!')
@@ -260,37 +280,36 @@ if __name__ == "__main__":
     tca = i2c.TCA9548A(addr=0x70)
     tca.disable_all()
     # initially enable channels with devices
-    #tca.set_channels([0,0,0,0,0,0,0,0]) 
+    tca.set_channels([1,1,1,1,1,1,0,1]) 
     # HIH8121: array of temp/humidity measurements
-    #Currently: #2 - Near MOT (Upper), #3 - Test Table, #4 - High Power Lasers,
-    #5 - Laser Table (Under Lids, Near TAs), #6 - Laser Table (Above Masters)
-    hih_channels = [1,2,3,4,5,6]
+    #Currently: #1 - Far Side of Test Table #2 - Near MOT (Upper), #3 - Middle of Test Table, #4 - High Power Lasers,
+    #5 - Laser Table (Under Lids, Near TAs), #7 - Near Side of Test Table,
+    #7 - Above Kraken: Disabled
+    hih_channels = [1,2,3,4,5,7]
     hih = [i2c.HIH8121(addr=0x27,cycle=[0,1],\
                        group={'me':ch,'channels':hih_channels,\
                               'switch':tca})\
            for ch in hih_channels]
-    # ADCs (why does cycle appear to be off by 1?? 0b100 -> AIN3 - gnd??)
-    adc1 = i2c.ADS1015(addr=0x48,cycle=[0b101,0b110,0b111,0b100])
-    adc2 = i2c.ADS1115(addr=0x49,cycle=[0b101,0b110,0b111,0b100])
-    adc3 = i2c.ADS1115(addr=0x4a,cycle=[0b101,0b110,0b111,0b100])
+    # ADS1015: 4-channel ADC (currently disabled)
+    adc = i2c.ADS1015(addr=0x48,cycle=[0b100,0b101,0b110,0b111])
+
+    ## Some triggered trace taking ...
+    #print('Waiting for trigger ...')
+    #tt = triggered_trace(16,[adc,adc,adc,adc],\
+    #                     dt=0.004,tmax=2.0,nmax=100000)
+    #with open("test_trace.txt",'w') as f:
+    #    for t in tt:
+    #        f.write(",".join(["{}".format(val) for val in t])+"\n")
     
     # create a datalogger object for the devices
-    log = DataLogger(filemask_temp="Datalog_Temp.txt",\
-                     filemask_fast="Datalog_Fast.txt",\
-                     filemask_slow="Datalog_Slow_{2:04}-{1:02}-{0:02}.txt",\
-                     path="/home/pi/YDrive/share/Pi_Monitoring/Logs/",\
-                     AC_pin=12,\
-                     Heater_pin=26,\
-                     devices=[adc1,adc1,adc1,adc1,adc2,adc2,adc2,adc2,adc3,adc3,adc3,adc3,
-                              hih[0],hih[0],hih[1],hih[1],hih[2],hih[2],hih[3],hih[3],hih[4],hih[4],hih[5],hih[5]],\
-                     meas_period=0.1,\
-                     avg_period=0.1,\
-                     save_period=120.0,\
+    log = DataLogger(filemask="DataLog_Triggered-QPD_{2:04}-{1:02}-{0:02}.txt",\
+                     path="/home/pi/Documents/Data Log/Triggered-QPD/",\
+                     devices=[adc,adc,adc,adc,hih[0],hih[0],hih[1],hih[1],hih[2],hih[2],hih[3],hih[3],hih[4],hih[4],hih[5],hih[5]],\
                      trigger_pin=16,\
-                     trigger_enable=True,\
-                     trigger_timeout=0.1*1000)
-    
-    #Start the measurement loop
+                     trigger_enable=True,
+                     trigger_timeout=1*1000,
+                     AC_pin=12)
+    # start the measurement loop
     try:
         print('Press CTRL-C to exit loop.')
         #log.start_measurement_loop()
